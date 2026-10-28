@@ -1,33 +1,28 @@
-FROM php:8.4.1-apache
-
-WORKDIR /var/www/html
-
-RUN apt-get update -y && apt-get install -y --no-install-recommends \
-    git unzip \
-    && docker-php-ext-install pdo_mysql \
+FROM php:8.4-apache
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      unzip \
+    && docker-php-ext-install -j1 pdo_mysql \
     && a2enmod rewrite \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
-
-# Serve Laravel from /public
-ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
-RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
-    && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
-
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+WORKDIR /var/www/html
 COPY . .
+RUN composer install --no-dev --prefer-dist --no-interaction --optimize-autoloader \
+    && composer check-platform-reqs --no-dev \
+    && mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache
 
-RUN composer install \
-    --no-dev \
-    --no-interaction \
-    --prefer-dist \
-    --optimize-autoloader \
-    && chown -R www-data:www-data storage bootstrap/cache \
-    && chmod -R ug+rwx storage bootstrap/cache
-
-RUN php artisan key:generate --force \
-    && php artisan migrate --force
+RUN printf 'ServerName localhost\n' > /etc/apache2/conf-available/servername.conf \
+    && a2enconf servername \
+    && printf '%s\n' \
+    '<VirtualHost *:80>' \
+    '    DocumentRoot /var/www/html/public' \
+    '    <Directory /var/www/html/public>' \
+    '        AllowOverride All' \
+    '        Require all granted' \
+    '    </Directory>' \
+    '</VirtualHost>' > /etc/apache2/sites-available/000-default.conf
 
 EXPOSE 80
-
 CMD ["apache2-foreground"]
